@@ -1,0 +1,6 @@
+[submodule "synopsys-usb-otg"]
+	path = synopsys-usb-otg
+	url = https://github.com/stm32-rs/synopsys-usb-otg
+[submodule "stm32f4xx-hal"]
+	path = stm32f4xx-hal
+	url = https://github.com/Disasm/stm32f4xx-hal/
