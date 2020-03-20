@@ -1,0 +1,11 @@
+[workspace]
+
+members = [
+    "rustfc_code",
+    "stm32f4xx-hal",
+    "synopsys-usb-otg",
+]
+
+[patch.crates-io]
+stm32f4xx-hal = { path = "stm32f4xx-hal" }
+synopsys-usb-otg = { path = "synopsys-usb-otg" }
