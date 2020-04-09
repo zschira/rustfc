@@ -23,47 +23,43 @@ use usb_device::prelude::*;
 use usb_device::bus::UsbBusAllocator;
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
 use core::mem::MaybeUninit;
+use core::ptr::null_mut;
 
 static mut EP_MEMORY: [u32; 1024] = [0; 1024];
 
 use alloc_cortex_m::CortexMHeap;
 use core::alloc::Layout;
+use alloc::alloc::alloc;
 use alloc::boxed::Box;
 use cortex_m_rt as rt;
+use rtfm::{Exclusive, Mutex};
+use core::fmt::Write;
 
 #[global_allocator]
 static ALLOCATOR: CortexMHeap = CortexMHeap::empty();
 
-
-pub struct UsbSerialDev<'a> {
-    bus: Box<UsbBusAllocator<UsbBus<Peripheral>>>,
-    serial: Box<SerialPort<'a, UsbBus<Peripheral>>>,
-    device: Box<UsbDevice<'a, UsbBus<Peripheral>>>
+macro_rules! uprint {
+    ($serial:expr, $($arg:tt)*) => {
+        $serial.write_fmt(format_args!($($arg)*)).ok()
+    };
 }
 
-impl<'a> UsbSerialDev<'a> {
-    fn init(&'a mut self, usb: Peripheral) {
-        self.bus = Box::new(UsbBus::new(usb, unsafe { &mut EP_MEMORY }));
-        self.serial = Box::new(SerialPort::new(self.bus.as_ref()));
-        self.device = Box::new(UsbDeviceBuilder::new(&self.bus, UsbVidPid(0x5824, 0x27dd))
-        .manufacturer("Fake company")
-        .product("Enumeration test")
-        .serial_number("TEST")
-        .device_class(USB_CLASS_CDC)
-        .build());
-    }
+macro_rules! uprintln {
+    ($serial:expr, $fmt:expr) => {
+        uprint!($serial, concat!($fmt, "\n"))
+    };
+    ($serial:expr, $fmt:expr, $($arg:tt)*) => {
+        uprint!($serial, concat!($fmt, "\n"), $($arg)*)
+    };
 }
-
-
-static mut USB_DEV: MaybeUninit<UsbSerialDev> = MaybeUninit::<UsbSerialDev>::uninit();
 
 #[rtfm::app(device = stm32f4xx_hal::stm32, peripherals = true)]
 const APP: () = {
     struct Resources {
-        usb_serial_dev: &'static MaybeUninit<UsbSerialDev<'static>>,
+        bus: UsbBusAllocator<UsbBus<Peripheral>>,
     }
 
-    #[init]
+    #[init(spawn = [manage_usb])]
     fn init(cx: init::Context) -> init::LateResources {
         let cp = cx.core;
         let dp = cx.device;
@@ -94,13 +90,29 @@ const APP: () = {
             pin_dp: gpioa.pa12.into_alternate_af10(),
         };
 
-        //let usb_bus = UsbBus::new(usb, unsafe { &mut EP_MEMORY });
-        unsafe{ (*USB_DEV.as_mut_ptr()).init(usb); 
-        init::LateResources { usb_serial_dev: &USB_DEV }}
+        let usb_bus = UsbBus::new(usb, unsafe { &mut EP_MEMORY });
+        cx.spawn.manage_usb();
+        init::LateResources { bus: usb_bus }
     }
 
-    #[task(resources=[usb_serial_dev])]
+    #[task(resources=[bus])]
     fn manage_usb(cx: manage_usb::Context) {
+        static mut serial_ptr: *mut u8 = null_mut::<u8>();
+        static mut usb_device_ptr: *mut u8 = null_mut::<u8>();
+        if(((*serial_ptr).is_null()) || ((*usb_device_ptr).is_null())) {
+            create_usb(&cx.resources.bus, *serial_ptr as *mut SerialPort<UsbBus<Peripheral>>, *usb_device_ptr as *mut UsbDevice<UsbBus<Peripheral>>);
+        }
+        let serial = unsafe{ (*serial_ptr as *mut SerialPort<UsbBus<Peripheral>>).as_mut().unwrap() };
+        let usb_dev= unsafe{ (*usb_device_ptr as *mut UsbDevice<UsbBus<Peripheral>>).as_mut().unwrap() };
+        let mut buf = [0u8; 64];
+        loop {
+            if usb_dev.poll(&mut [serial]) {
+                match serial.read(&mut buf) {
+                    Ok(len) if len > 0 => { uprintln!(serial, "Hello World!"); }
+                    _ => {}
+                }
+            }
+        }
     }
 
     extern "C" {
@@ -108,6 +120,22 @@ const APP: () = {
     }
 };
 
+fn create_usb<'a>(usb_bus: &'a UsbBusAllocator<UsbBus<Peripheral>>, mut serial_ptr: *mut SerialPort<'a, UsbBus<Peripheral>>, mut device_ptr: *mut UsbDevice<'a, UsbBus<Peripheral>>) {
+    serial_ptr = unsafe{ alloc(Layout::new::<SerialPort<UsbBus<Peripheral>>>()) as *mut SerialPort<UsbBus<Peripheral>> };
+    device_ptr = unsafe{ alloc(Layout::new::<UsbDevice<UsbBus<Peripheral>>>()) as *mut UsbDevice<UsbBus<Peripheral>> };
+    if let (Some(serial), Some(device)) = (
+        unsafe{ serial_ptr.as_mut() },
+        unsafe{ device_ptr.as_mut() },
+    ) {
+        *serial = SerialPort::new(usb_bus);
+        *device = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x5824, 0x27dd))
+        .manufacturer("Fake company")
+        .product("Enumeration test")
+        .serial_number("TEST")
+        .device_class(USB_CLASS_CDC)
+        .build();
+    };
+}
 
 #[lang = "oom"]
 #[no_mangle]
