@@ -12,3 +12,5 @@ usbd-serial = {path = "/home/zach/projects/rust/usbd-serial", version = "0.1.0"}
 embedded-hal = "0.2.3"
 stm32f4xx-hal = { version = "0.5.0", features = ["stm32f405", "synopsys-usb-otg", "usb_fs"] }
 usb-device = "0.2.2"
+cortex-m-rtfm = "0.5.1"
+alloc-cortex-m = {git = "https://github.com/rust-embedded/alloc-cortex-m"}
